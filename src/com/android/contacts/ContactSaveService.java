@@ -182,6 +182,10 @@ public class ContactSaveService extends IntentService {
 
     @Override
     protected void onHandleIntent(Intent intent) {
+        if (intent == null) {
+            Log.d(TAG, "onHandleIntent: could not handle null intent");
+            return;
+        }
         // Call an appropriate method. If we're sure it affects how incoming phone calls are
         // handled, then notify the fact to in-call screen.
         String action = intent.getAction();
@@ -313,6 +317,8 @@ public class ContactSaveService extends IntentService {
         serviceIntent.setAction(ContactSaveService.ACTION_SAVE_CONTACT);
         serviceIntent.putExtra(EXTRA_CONTACT_STATE, (Parcelable) state);
         serviceIntent.putExtra(EXTRA_SAVE_IS_PROFILE, isProfile);
+        serviceIntent.putExtra(EXTRA_SAVE_MODE, saveMode);
+
         if (updatedPhotos != null) {
             serviceIntent.putExtra(EXTRA_UPDATED_PHOTOS, (Parcelable) updatedPhotos);
         }
@@ -333,7 +339,7 @@ public class ContactSaveService extends IntentService {
         RawContactDeltaList state = intent.getParcelableExtra(EXTRA_CONTACT_STATE);
         boolean isProfile = intent.getBooleanExtra(EXTRA_SAVE_IS_PROFILE, false);
         Bundle updatedPhotos = intent.getParcelableExtra(EXTRA_UPDATED_PHOTOS);
-
+        int saveMode = intent.getIntExtra(EXTRA_SAVE_MODE, -1);
         // Trim any empty fields, and RawContacts, before persisting
         final AccountTypeManager accountTypes = AccountTypeManager.getInstance(this);
         RawContactModifier.trimEmpty(state, accountTypes);
@@ -465,7 +471,7 @@ public class ContactSaveService extends IntentService {
                     }
                 }
 
-                if (!saveUpdatedPhoto(rawContactId, photoUri)) succeeded = false;
+                if (!saveUpdatedPhoto(rawContactId, photoUri, saveMode)) succeeded = false;
             }
         }
 
@@ -486,12 +492,12 @@ public class ContactSaveService extends IntentService {
      * Save updated photo for the specified raw-contact.
      * @return true for success, false for failure
      */
-    private boolean saveUpdatedPhoto(long rawContactId, Uri photoUri) {
+    private boolean saveUpdatedPhoto(long rawContactId, Uri photoUri, int saveMode) {
         final Uri outputUri = Uri.withAppendedPath(
                 ContentUris.withAppendedId(RawContacts.CONTENT_URI, rawContactId),
                 RawContacts.DisplayPhoto.CONTENT_DIRECTORY);
 
-        return ContactPhotoUtils.savePhotoFromUriToUri(this, photoUri, outputUri, true);
+        return ContactPhotoUtils.savePhotoFromUriToUri(this, photoUri, outputUri, (saveMode == 0));
     }
 
     /**
@@ -514,8 +520,12 @@ public class ContactSaveService extends IntentService {
     private long getInsertedRawContactId(
             final ArrayList<ContentProviderOperation> diff,
             final ContentProviderResult[] results) {
+        if (results == null) {
+            return -1;
+        }
         final int diffSize = diff.size();
-        for (int i = 0; i < diffSize; i++) {
+        final int numResults = results.length;
+        for (int i = 0; i < diffSize && i < numResults; i++) {
             ContentProviderOperation operation = diff.get(i);
             if (operation.getType() == ContentProviderOperation.TYPE_INSERT
                     && operation.getUri().getEncodedPath().contains(
@@ -816,6 +826,9 @@ public class ContactSaveService extends IntentService {
         // Undemote the contact if necessary
         final Cursor c = getContentResolver().query(contactUri, new String[] {Contacts._ID},
                 null, null, null);
+        if (c == null) {
+            return;
+        }
         try {
             if (c.moveToFirst()) {
                 final long id = c.getLong(0);
@@ -1004,6 +1017,11 @@ public class ContactSaveService extends IntentService {
                 JoinContactQuery.PROJECTION,
                 JoinContactQuery.SELECTION,
                 new String[]{String.valueOf(contactId1), String.valueOf(contactId2)}, null);
+        if (c == null) {
+            Log.e(TAG, "Unable to open Contacts DB cursor");
+            showToast(R.string.contactSavedErrorToast);
+            return;
+        }
 
         long rawContactIds[];
         long verifiedNameRawContactId = -1;
